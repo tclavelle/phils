@@ -1,0 +1,55 @@
+---
+title: "Philippines Fishery Profile for Vibrant Oceans Initiative (VOI)"
+output: html_document
+---
+
+```{r, echo=F}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(broom)
+library(rgdal)
+
+# read in Phils provincial landing data
+phils_prov<-read.csv(file = 'Data/phils-data/phils_provincial_data.csv',stringsAsFactors = F) %>% 
+  tbl_df() %>%
+  select(-X)
+
+# Read in province and municipal shapefiles and tidy to a spatial data frame for use with ggplot
+philsmap<-readOGR(dsn = 'Data/phils-data/Provinces', layer = 'Provinces', stringsAsFactors = F)
+munimap<-readOGR(dsn = 'Data/phils-data/MuniCities', layer = 'MuniCities', stringsAsFactors = F)
+
+# convert spatial data frame to a format for ggplot
+philsmap<-tidy(philsmap, region = NULL)
+```
+
+# Summary of Fisheries in the Philippines
+The Philippines collect fishery data at the provincial level for 32 species categories.  
+
+```{r,echo=F, results= 'asis', tidy=TRUE}
+library(googleVis)
+op <- options(gvis.plot.tag='chart')
+
+
+datSK<-read.csv(file = 'Data/sankey_phils_input.csv',stringsAsFactors = F)
+
+Sankey <- gvisSankey(datSK, from="From", to="To", weight="Weight",
+                     options=list(
+                       sankey  ="{link: {color: { fill: '#d799ae' } },
+                       node: { color: { fill: '#a61d4c' },
+                       label: { color: '#871b47' } }}",
+                       width   = '800px',
+                       height  = '500px'))
+
+plot(Sankey)
+```
+
+
+
+```{r,}
+
+## MAPPING CODE
+# philsmap %>%
+#   ggplot(aes(x = long, y = lat, group = group)) +
+#   geom_polygon()
+```
