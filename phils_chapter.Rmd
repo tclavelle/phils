@@ -1,0 +1,35 @@
+---
+title: "Philippines VOI Methods"
+author: "Tyler Clavelle"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+---
+
+# Vibrant Oceans in the Philippines
+
+## Background
+Insert introductory text outlining the VOI work occuring in the Philippines
+
+## Fishery Archetypes
+Description of each archetype
+
+```{r, echo=F}
+
+print('Insert map/infographics of archetypes, including spatial extent and catch composition')
+
+```
+
+## Management Interventions
+
+## Model Outputs
+
+Include figures, summary statistics, and interpretation
+
+```{r pressure, echo=FALSE}
+print('Insert plots and tables')
+```
+
+

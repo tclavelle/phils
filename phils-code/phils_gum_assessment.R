@@ -79,7 +79,7 @@ phils_final<-data.frame(phils_final,stringsAsFactors = F)
 phils_results<-run_gum_assessment(phils_final)
 
 # Save raw results
-write.csv(phils_results, file = '../../Google Drive/Project Data/phils-data/Phils_upside_status.csv')
+write.csv(phils_results, file = '../../Google Drive/Project Data/phils-data/phils-results/phils_upside_status.csv')
 
 ## Summarize results
 
@@ -135,7 +135,7 @@ phils_results %>%
     scale_y_continuous(limits = c(-1,6),breaks = seq(-1,6, by = 0.5),labels = c(seq(-1,3.5,by = 0.5), expression(phantom(x) >=4), seq(4.5,6,by = 0.5))) + 
     coord_cartesian(xlim = c(0,2.5), ylim = c(0,4))
 
-ggsave(filename = 'VOI-Model/phils_Kobe.pdf')
+ggsave(filename = '../../Google Drive/Project Data/phils-data/phils-results/phils_Kobe.pdf')
 
 ### Histograms of b and f by year ###
 phils_results %>%
