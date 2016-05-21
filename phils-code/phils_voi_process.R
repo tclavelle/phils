@@ -24,7 +24,7 @@ library(broom)
 # Total catch and status by region, species, and archetype
 phils_status <- read.csv(file = '../../Google Drive/Project Data/phils-data/phils-results/phils_upside_status.csv', stringsAsFactors = F) %>%
   tbl_df() %>%
-  select(-X)
+  dplyr::select(-X)
 
 # Processed but unaggregated fisheries data
 phils_fish <- tbl_df(read.csv(file = '../../Google Drive/Project Data/phils-data/phils_fisheries_processed.csv', stringsAsFactors = F))
@@ -40,39 +40,90 @@ phils_input<-data_frame(archetypeName=NA,subArchetypeName=NA, speciesName=NA, fl
                         habitatDegradationRate_2=NA, gHab_1=NA, gHab_2=NA, gamma_1=NA, gamma_2=NA, price_1=NA, price_2=NA,
                         variableCost_1=NA, variableCost_2=NA)
 
+## Note: For the numbered variables, 1 = municiapal/artisanal and 2 = commercial
+
 # Table of habitat parameters
 habitat<-data_frame(archetype = c('Hard bottom', 'Soft bottom'),
                     health   = c(1,1),
                     deg_rate = c(0,0),
                     gHab     = c(0,0))
 
-# 
-
 # Extract relevent parameters from GUM status and catch statistics
 input<-phils_status %>%
   filter(year==max(year)) %>%
-  select(Archetype, region_name, CommName, SciName, Price, BvBmsy, FvFmsy, phi, g, k) #%>%
-  # rename(archetypeName = Archetype,
-  #        subArchetypeName = region_name,
-  #        speciesName      = CommName,
-  #        price_1          = Price,
-  #        b0_1             = BvBmsy,
-  #        K_1              = k,
-  #        g_1              = g,
-  #        phi_1            = phi)
+  dplyr::select(Archetype, region_name, CommName, SciName, BvBmsy, FvFmsy, phi, g, k) %>%
+  rename(archetypeName = Archetype,
+         subArchetypeName = region_name,
+         speciesName      = CommName,
+         b0_1             = BvBmsy,
+         K_1              = k,
+         g_1              = g,
+         phi_1            = phi)
 
 
-# Calculate fraction of catch
+# Calculate fraction of catch from municipal and commercial fleets by region and species
 catch_ratios<-phils_fish %>%
-  select(archetype,region_name, province_name,scale,species,year,harvest) %>%
+  dplyr::select(archetype,region_name, province_name,scale,species,year,harvest) %>%
   filter(harvest>0) %>%
   spread(scale,harvest) %>%
   mutate(perc_muni = round(Municipal/(Municipal + Commercial), digits = 2),
          perc_comm = 1-perc_muni) %>%
   group_by(region_name,archetype,species,year) %>%
-  summarize(mean_muni = mean(perc_muni, na.rm = T),
-            mean_comm = mean(perc_comm, na.rm = T)) %>%
-  filter(year==max(year)) 
+  summarize(wt_mean_muni = sum(Municipal, na.rm =T)/(sum(Municipal, na.rm = T) + sum(Commercial, na.rm = T)),
+            wt_mean_comm = sum(Commercial, na.rm =T)/(sum(Municipal, na.rm = T) + sum(Commercial, na.rm = T))) %>%
+  filter(year==max(year)) %>%
+  ungroup() 
+
+# Calculate fraction of catch from municipal and commercial fleets by species
+catch_ratios_nat<-phils_fish %>%
+  dplyr::select(archetype,region_name, province_name,scale,species,year,harvest) %>%
+  filter(harvest>0) %>%
+  spread(scale,harvest) %>%
+  mutate(perc_muni = round(Municipal/(Municipal + Commercial), digits = 2),
+         perc_comm = 1-perc_muni) %>%
+  group_by(archetype,species,year) %>%
+  summarize(wt_mean_muni = sum(Municipal, na.rm =T)/(sum(Municipal, na.rm = T) + sum(Commercial, na.rm = T)),
+            wt_mean_comm = sum(Commercial, na.rm =T)/(sum(Municipal, na.rm = T) + sum(Commercial, na.rm = T))) %>%
+  filter(year==max(year)) %>%
+  ungroup()
+
+# Join input dataframe with regional catch ratios
+df<-catch_ratios %>%
+  rename(archetypeName    = archetype,
+         subArchetypeName = region_name,
+         speciesName      = species) %>%
+  right_join(input, by = c('archetypeName','subArchetypeName','speciesName'))
+
+# Add national percentages
+nats<-unique(catch_ratios_nat$species)
+
+for(a in 1:length(nats)) {
+  df[df$speciesName==nats[a], c("wt_mean_muni", 'wt_mean_comm')]<-catch_ratios_nat[match(nats[a], catch_ratios_nat$species),c('wt_mean_muni','wt_mean_comm')]
+}
+
+# Set year to 2014
+df$year<-2014
+
+# Calculate catch-weighted prices by region and sector for inputs
+p_diffs<-phils_fish %>%
+  dplyr::select(archetype,region_name, province_name,scale,species,year,harvest, value_us, exrate) %>%
+  group_by(archetype, region_name, species, year, scale, exrate) %>%
+  summarize(wt_mean_price = sum(value_us, na.rm =T)/(sum(harvest, na.rm = T))) %>% # weighted mean
+  ungroup() %>%
+  dplyr::select(-exrate) %>% # drop exchange rate
+  spread(scale,wt_mean_price) %>% 
+  mutate(p_diff = Municipal - Commercial) %>%
+  rename(price_1 = Municipal,
+         price_2 = Commercial) 
+
+# Join price data with input data frame
+df<-p_diffs %>%
+  filter(year==max(year)) %>%
+  dplyr::select(archetype, region_name, species, price_1, price_2) %>%
+  rename(archetypeName    = archetype,
+         subArchetypeName = region_name,
+         speciesName      = species) %>%
+  right_join(df)
 
 ########################################################################
 ### summarize data and map to philippines -----------------------------
