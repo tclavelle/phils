@@ -57,3 +57,68 @@ region_results %>%
   left_join(philsmap) %>%
   # ggplot(aes(x=long, y=lat, fill = medianb_nat)) + DON"T PLOT THIS - theres an error with the join and the plot will blow up computer
   # geom_polygon()
+  
+  ## Read in shapefile and tidy to a spatial data frame for use with ggplot
+  # shapefile map data
+  philsmap<-readOGR(dsn = 'voi/Provinces', layer = 'Provinces', stringsAsFactors = F)
+
+# lookup table with provinces and ids for joining
+lktable<-data.frame(municipality=philsmap@data$NAME_1, id=philsmap@data$ID_1)
+
+# convert spatial data frame to a format for ggplot
+philsmap<-tidy(philsmap, region = NULL)
+
+# make blank map of Philippines
+blank_map<-philsmap %>%
+  ggplot(aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill='white')
+
+## Summary calculations to join with spatial data frame
+
+# list of tuna stocks to exclude
+tunas<-c('Bigeye tuna (Tambakol/ Bariles)',
+         'Eastern little tuna (Bonito)',
+         'Frigate tuna (Tulingan)',
+         'Skipjack (Gulyasan)',
+         'Yellowfin tuna (Tambakol/Bariles)')
+
+# 2014 values - Tuna excluded
+calc14<-final %>%
+  filter(year==2014 & !(species %in% tunas)) %>%
+  group_by(municipality) %>%
+  summarize(
+    totalcatch14     =  sum(catch,na.rm=T),
+    logtotalcatch14  =  log10(totalcatch14),
+    meanprice14      =  mean(priceperton,na.rm=T)) %>%
+  right_join(lktable) %>%
+  mutate(id=as.character(id)) %>%
+  dplyr::select(-municipality)
+
+# join calc14 with 2014 calculations
+philsmap<-left_join(philsmap,calc14)
+
+# percent changes in catch since 2008 - Tuna included
+perc09<-final %>%
+  filter(year>2009 & !(species %in% tunas)) %>%
+  group_by(municipality,species) %>%
+  mutate(
+    priorcatch = lag(catch),
+    percchange = 100*((catch-priorcatch)/priorcatch)) %>%
+  group_by(municipality) %>%
+  summarize(avgchange=mean(percchange,na.rm=T)) %>%
+  right_join(lktable) %>%
+  mutate(id=as.character(id)) %>%
+  dplyr::select(-municipality)
+
+# join percentage calculations with map data
+philsmap<-left_join(philsmap, perc09)
+
+plotA<-philsmap %>%
+  ggplot(aes(x = long, y = lat, group = group, fill = logtotalcatch14)) +
+  geom_polygon()
+
+plotB<-philsmap %>%
+  ggplot(aes(x = long, y = lat, group = group, fill = percchange)) +
+  geom_polygon()
+
+ggsave(file='notunaperc.pdf')

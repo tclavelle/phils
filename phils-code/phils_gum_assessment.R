@@ -11,6 +11,9 @@ library(GUM)
 library(readxl)
 library(readr)
 library(ggplot2)
+library(snowfall)
+library(parallel)
+library(reshape2)
 
 ###########################################################################################################
 ### Process Philippines catch data to work with GUM package -----------------------------------------------
@@ -81,7 +84,24 @@ phils_results<-run_gum_assessment(phils_final)
 # Save raw results
 write.csv(phils_results, file = '../../Google Drive/Project Data/phils-data/phils-results/phils_upside_status.csv')
 
-## Summarize results
+# Run projections
+phils_results<-read.csv(file = '../../Google Drive/Project Data/phils-data/phils-results/phils_upside_status.csv',
+                        stringsAsFactors = F) %>% 
+  select(-X) %>%
+  mutate(BvBmsyOpenAccess = 0.3,
+         CatchShare     = 0) 
+
+phils_proj<-RunProjection(Data = phils_results, BaselineYear = 2014, NumCPUs = 1)
+
+phils_projects<-phils_proj[[1]]
+
+# Save projections
+write_csv(phils_projects, path = '../../Google Drive/Project Data/phils-data/phils-results/phils_projections.csv')
+
+###########################################################################################################
+## Summarize results --------------------------------------------------------------------------------------
+
+### Status results ###
 
 # national summary
 nat_results<-phils_results %>%
@@ -108,6 +128,38 @@ region_results<-phils_results %>%
             medianf_nat           = median(FvFmsy,na.rm=T),
             msy_wt_geom_mean_bnat = exp(sum(MSY * log(FvFmsy + 1e-3), na.rm = T)/sum(MSY, na.rm = T)),
             msy_wt_geom_mean_fnat = exp(sum(MSY * log(BvBmsy), na.rm = T)/sum(MSY, na.rm = T)))
+
+### Projection Results ###
+
+# National summary by year and policy
+nat_proj_results<-phils_projects %>%
+  group_by(Year, Policy) %>%
+  summarize(total_catch   = sum(Catch, na.rm = T),
+            total_profits = sum(Profits, na.rm = T),
+            total_biomass = sum(Biomass, na.rm = T)) %>%
+  gather(Metric, Value, 3:5) %>%
+  group_by(Policy)
+
+# Extract today results
+today<-phils_projects %>%
+  filter(Policy=='Historic' & Year == 2014) %>%
+  group_by(Year, Policy) %>%
+  summarize(total_catch   = sum(Catch, na.rm = T),
+            total_profits = sum(Profits, na.rm = T),
+            total_biomass = sum(Biomass, na.rm = T))
+
+# add today values to national values
+nat_proj_results$baseline_catch <- today$total_catch
+nat_proj_results$baseline_profits <- today$total_profits
+nat_proj_results$baseline
+
+ggplot(nat_proj_results, aes(x = Year, y = Value, color = Policy)) +
+         geom_line() +
+         facet_wrap(~Metric, scales = 'free')
+
+ggplot(subset(nat_proj_results, Year == 2044), aes(x = Policy, y = Value, color = Policy)) +
+  geom_bar(stat = 'identity') +
+  facet_wrap(~Metric, scales = 'free')
 
 ###########################################################################################################
 ### Kobe and other summary plots  -------------------------------------------------------------------------

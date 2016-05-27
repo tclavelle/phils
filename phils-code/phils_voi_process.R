@@ -9,13 +9,11 @@
 
 ########################################################################
 ### Load packages ------------------------------------------------------
-library(plyr)
 library(tidyr)
 library(dplyr)
+library(readr)
 library(ggplot2)
 library(readxl)
-library(rgdal)
-library(rgeos)
 library(broom)
 
 ###########################################################################################################################
@@ -25,6 +23,9 @@ library(broom)
 phils_status <- read.csv(file = '../../Google Drive/Project Data/phils-data/phils-results/phils_upside_status.csv', stringsAsFactors = F) %>%
   tbl_df() %>%
   dplyr::select(-X)
+
+# Fishery projections (stocks aggregated by region)
+phils_proj <- read_csv(file = '../../Google Drive/Project Data/phils-data/phils-results/phils_projections.csv')
 
 # Processed but unaggregated fisheries data
 phils_fish <- tbl_df(read.csv(file = '../../Google Drive/Project Data/phils-data/phils_fisheries_processed.csv', stringsAsFactors = F))
@@ -116,7 +117,25 @@ p_diffs<-phils_fish %>%
   rename(price_1 = Municipal,
          price_2 = Commercial) 
 
-# Join price data with input data frame
+# Calculate catch-weighted prices for national stocks
+p_diffs_nat<-phils_fish %>%
+  filter(archetype %in% c('Large pelagic', 'Small pelagic')) %>%
+  dplyr::select(archetype,region_name, province_name,scale,species,year,harvest, value_us, exrate) %>%
+  group_by(archetype, species, year, scale, exrate) %>%
+  summarize(wt_mean_price = sum(value_us, na.rm =T)/(sum(harvest, na.rm = T))) %>% # weighted mean
+  ungroup() %>%
+  dplyr::select(-exrate) %>% # drop exchange rate
+  spread(scale,wt_mean_price) %>% 
+  mutate(p_diff           = Municipal - Commercial,
+         subArchetypeName = 'National') %>%
+  rename(price_1 = Municipal,
+         price_2 = Commercial,
+         archetypeName = archetype,
+         speciesName   = species) %>%
+  filter(year == 2014)
+
+## Join price data with input data frame
+# Regional prices
 df<-p_diffs %>%
   filter(year==max(year)) %>%
   dplyr::select(archetype, region_name, species, price_1, price_2) %>%
@@ -125,72 +144,28 @@ df<-p_diffs %>%
          speciesName      = species) %>%
   right_join(df)
 
-########################################################################
-### summarize data and map to philippines -----------------------------
+# Add in national prices
+for (b in 1:nrow(p_diffs_nat)) {
+ r <- df$archetypeName == p_diffs_nat$archetypeName[b] & df$speciesName == p_diffs_nat$speciesName[b]
+ df$price_1[r] <- p_diffs_nat$price_1[b]
+ df$price_2[r] <- p_diffs_nat$price_2[b]
+}
 
-## Read in shapefile and tidy to a spatial data frame for use with ggplot
-# shapefile map data
-philsmap<-readOGR(dsn = 'voi/Provinces', layer = 'Provinces', stringsAsFactors = F)
+## Calculate relative F of each fleet 
+u_data <- phils_proj %>%
+  select(Archetype, CommName, region_name, Year, Catch, Biomass ) %>%
+  rename(archetypeName    = Archetype,
+         speciesName      = CommName,
+         subArchetypeName = region_name) %>%
+  filter(Year == 2014) %>%
+  left_join(df) %>%
+  mutate(u_1 = Catch * wt_mean_muni / Biomass,
+         u_2 = Catch * wt_mean_comm / Biomass) # !! these are Fs, need to then divide by Fmsy
 
-# lookup table with provinces and ids for joining
-lktable<-data.frame(municipality=philsmap@data$NAME_1, id=philsmap@data$ID_1)
 
-# convert spatial data frame to a format for ggplot
-philsmap<-tidy(philsmap, region = NULL)
 
-# make blank map of Philippines
-blank_map<-philsmap %>%
-  ggplot(aes(x = long, y = lat, group = group)) +
-  geom_polygon(fill='white')
 
-## Summary calculations to join with spatial data frame
 
-# list of tuna stocks to exclude
-tunas<-c('Bigeye tuna (Tambakol/ Bariles)',
-         'Eastern little tuna (Bonito)',
-         'Frigate tuna (Tulingan)',
-         'Skipjack (Gulyasan)',
-         'Yellowfin tuna (Tambakol/Bariles)')
 
-# 2014 values - Tuna excluded
-calc14<-final %>%
-  filter(year==2014 & !(species %in% tunas)) %>%
-  group_by(municipality) %>%
-  summarize(
-    totalcatch14     =  sum(catch,na.rm=T),
-    logtotalcatch14  =  log10(totalcatch14),
-    meanprice14      =  mean(priceperton,na.rm=T)) %>%
-  right_join(lktable) %>%
-  mutate(id=as.character(id)) %>%
-  dplyr::select(-municipality)
-
-# join calc14 with 2014 calculations
-philsmap<-left_join(philsmap,calc14)
-
-# percent changes in catch since 2008 - Tuna included
-perc09<-final %>%
-  filter(year>2009 & !(species %in% tunas)) %>%
-  group_by(municipality,species) %>%
-  mutate(
-    priorcatch = lag(catch),
-    percchange = 100*((catch-priorcatch)/priorcatch)) %>%
-  group_by(municipality) %>%
-  summarize(avgchange=mean(percchange,na.rm=T)) %>%
-  right_join(lktable) %>%
-  mutate(id=as.character(id)) %>%
-  dplyr::select(-municipality)
-
-# join percentage calculations with map data
-philsmap<-left_join(philsmap, perc09)
-
-plotA<-philsmap %>%
-  ggplot(aes(x = long, y = lat, group = group, fill = logtotalcatch14)) +
-  geom_polygon()
-
-plotB<-philsmap %>%
-  ggplot(aes(x = long, y = lat, group = group, fill = percchange)) +
-  geom_polygon()
-
-ggsave(file='notunaperc.pdf')
 
 
