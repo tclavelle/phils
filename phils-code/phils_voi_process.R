@@ -153,19 +153,94 @@ for (b in 1:nrow(p_diffs_nat)) {
 
 ## Calculate relative F of each fleet 
 u_data <- phils_proj %>%
-  select(Archetype, CommName, region_name, Year, Catch, Biomass ) %>%
+  select(Archetype, CommName, region_name, Year, Catch, Biomass, MSY, Bmsy ) %>%
   rename(archetypeName    = Archetype,
          speciesName      = CommName,
          subArchetypeName = region_name) %>%
   filter(Year == 2014) %>%
   left_join(df) %>%
-  mutate(u_1 = Catch * wt_mean_muni / Biomass,
-         u_2 = Catch * wt_mean_comm / Biomass) # !! these are Fs, need to then divide by Fmsy
+  mutate(u_1  = Catch * wt_mean_muni / Biomass, # F municipal
+         u_2  = Catch * wt_mean_comm / Biomass, # F commercial
+         umsy = MSY / Bmsy, # Fmsy
+         uvumsy_1 = u_1 / umsy, # F/Fmsy municipal
+         uvumsy_2 = u_2 / umsy) # F/Fmsy commercial
+
+## Add fishing mortality to input file
+df <- u_data %>%
+  select(archetypeName, speciesName, subArchetypeName, Year, uvumsy_1, uvumsy_2) %>%
+  right_join(df)
+
+## Assign FvFmsy to each patch based on outputs from workshop
+# Initialize all variables at 0
+df <- df %>%
+  mutate(fleetName_1 = 'Artisanal', # artisanal fleet 
+         fleetName_2 = 'Industrial', # industrial fleet
+         patchName_1 = 'Municipal waters', # municipal waters (<= 12 km)
+         patchName_2 = 'Non municipal waters', # outside municipal waters (> 12 km)
+         f0_1_1 = 0, # municipal effort municipal waters
+         f0_1_2 = 0, # municipal effort outer waters
+         f0_2_1 = 0, # commercial effort municipal waters
+         f0_2_2 = 0) # commercial effort outer waters
+
+# For hard and soft bottom archetypes, all effort occurs in municipal water
+df$f0_1_1[df$archetypeName %in% c('Hard bottom', 'Soft bottom')] <- df$uvumsy_1[df$archetypeName %in% c('Hard bottom', 'Soft bottom')]
+df$f0_2_1[df$archetypeName %in% c('Hard bottom', 'Soft bottom')] <- df$uvumsy_2[df$archetypeName %in% c('Hard bottom', 'Soft bottom')]
+
+# For Large pelagics, all effort occurs outside municipal waters
+df$f0_1_2[df$archetypeName %in% c('Large pelagic')] <- df$uvumsy_1[df$archetypeName %in% c('Large pelagic')]
+df$f0_2_2[df$archetypeName %in% c('Large pelagic')] <- df$uvumsy_2[df$archetypeName %in% c('Large pelagic')]
+
+# For Small pelagics, municipal effort all in municipal waters, commercial effort split
+df$f0_1_1[df$archetypeName %in% c('Small pelagic')] <- df$uvumsy_1[df$archetypeName %in% c('Small pelagic')]
+df$f0_2_1[df$archetypeName %in% c('Small pelagic')] <- 0.5 * df$uvumsy_2[df$archetypeName %in% c('Small pelagic')]
+df$f0_2_2[df$archetypeName %in% c('Small pelagic')] <- 0.5 * df$uvumsy_2[df$archetypeName %in% c('Small pelagic')]
+
+## Assign carrying capacity to the two patches based on outputs from workshop
+# Initialize all variables at 0
+df <- df %>%
+  mutate(K_1 = 0,
+         K_2 = 0)
+
+# Set K to full amount in nearshore patch for hard and soft bottom
+df$K_1[df$archetypeName %in% c('Hard bottom', 'Soft bottom')] <- input$K_1[input$archetypeName %in% c('Hard bottom', 'Soft bottom')]
+
+# Set K to full amount in outer patch for large pelagic
+df$K_2[df$archetypeName %in% c('Large pelagic')] <- input$K_1[input$archetypeName %in% c('Large pelagic')]
+
+# Split K evenly between patches for small pelagics
+df$K_2[df$archetypeName %in% c('Small pelagic')] <- 0.5 * input$K_1[input$archetypeName %in% c('Small pelagic')]
+df$K_1[df$archetypeName %in% c('Small pelagic')] <- 0.5 * input$K_1[input$archetypeName %in% c('Small pelagic')]
+
+# Find variables still missing
+colnames(phils_input)[!(colnames(phils_input) %in% colnames(df))]
+
+# Add remaining variables
+df <- df %>%
+  mutate(g_2    = g_1, # g same
+         phi_2  = phi_1, # phi same
+         b0_2   = b0_1, # !! TEMPORARY !! setting biomass the same in both patches
+         m      = 0, # zero movement
+         q0_1_1 = 0, # catchability and effort set to 0 for now and using F/Fmsy instead
+         q0_1_2 = 0,
+         q0_2_1 = 0,
+         q0_2_2 = 0,
+         E0_1_1 = 0,
+         E0_1_2 = 0,
+         E0_2_1 = 0,
+         E0_2_2 = 0,
+         habitatHealth_1 = 1, # assuming perfect habitat health in both patches
+         habitatHealth_2 = 1,
+         habitatDegradationRate_1 = 0, # zero habitat damage
+         habitatDegradationRate_2 = 0,
+         gHab_1                   = 0, # habitat does not grow 
+         gHab_2                   = 0,
+         gamma_1                  = 0,
+         gamma_2                  = 0,
+         variableCost_1           = price_1 * 0.75, ## !! TEMPORARY !! set variable cost to 75% of price
+         variableCost_2           = price_2 * 0.75)
 
 
-
-
-
+         
 
 
 

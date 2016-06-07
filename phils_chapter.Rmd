@@ -11,10 +11,12 @@ output:
 # Vibrant Oceans in the Philippines
 
 ## Background
-Insert introductory text outlining the VOI work occuring in the Philippines
+The Philippines VOI workshop was held April 5^th^ & 6^th^ in Manila. During the workshop, local fishery experts 
 
 ### Methods
 Data for this analysis comes from several sources. Fishery harvest data for both the municipal and commercial sectors was obtained from the CountrySTAT Philippines [data portal](http://countrystat.psa.gov.ph/). 
+
+
 
 Prices by region and species were calculated seperately for the municipal and commercial sectors as a catch-weighted average price.
 

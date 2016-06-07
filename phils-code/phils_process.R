@@ -102,7 +102,10 @@ phils<-phils_archs %>%
   right_join(phils, by = 'Species')
 
 # assign "Other" category to it's own archetype
-phils$archetype[phils$Species=='Other']<-'Other'
+phils$archetype[phils$Species=='Others']<-'Other'
+phils$ISSCAAP_code[phils$Species=='Others']<-39
+phils$ISSCAAP_name[phils$Species=='Others']<-'Marine fishes not identified'
+phils$ASFIS_species[phils$Species=='Others']<-'Marine fishes nei'
 
 phils$Province[phils$Province=='Samar']<-'SAMAR (WESTERN SAMAR)'
 
@@ -168,15 +171,15 @@ phils_aqua<-phils_aqua %>%
   rename(PROVINCE_NAME = Region) %>%
   filter(grepl('....' ,PROVINCE_NAME, fixed = T)==T) %>%
   mutate(PROVINCE_NAME = toupper(gsub(pattern = '....', replacement = '', PROVINCE_NAME, fixed = T)),
-         Species  = gsub(pattern = '....', replacement = '', Species, fixed = T))
+         Species       = gsub(pattern = '....', replacement = '', Species, fixed = T))
 
 # Extract culture types (define as archetype)
 phils_aqua_archs<-phils_aqua %>%
   select(Species) %>%
   filter(grepl(pattern = '..', Species, fixed = T)) %>%
   distinct() %>%
-  rename(Archetype = Species) %>%
-  mutate(Archetype = gsub(pattern = '..', replacement = '', Archetype, fixed = T)) %>%
+  rename(Archetype  = Species) %>%
+  mutate(Archetype  = gsub(pattern = '..', replacement = '', Archetype, fixed = T)) %>%
   mutate(Acronymn   = c('BF','BP','BC','FF','FP','FC','MP','MC','OYSTER','MUSSEL','SEAWEED','RF','SFR'))
 
 # Filter out the aggregate results for culture types
@@ -264,6 +267,8 @@ phils_aqua_final<-phils_aqua_final %>%
   rename(harvest = aqua_harvest,
          value   = aqua_value) %>%
   select(-acronymn, -id)
+
+# build table for isscaap variables for aquaculture species
 
 ##############################################################################
 ### Convert value from PHP to US and calculate price
