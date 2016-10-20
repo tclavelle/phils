@@ -16,24 +16,39 @@ library(rgdal)
 library(rgeos)
 library(broom)
 library(readr)
+library(stringr)
 
 # shapefile map data
 philsmap<-readOGR(dsn = '../../Google Drive/Project Data/phils-data/Provinces', layer = 'Provinces', stringsAsFactors = F)
 munimap<-readOGR(dsn = '../../Google Drive/Project Data/phils-data/MuniCities', layer = 'MuniCities', stringsAsFactors = F)
 
-# read data of TURF-able municipalities
-# muniturf<-read_excel(path = 'voi/phils-data-antonius/MWD_Table.xlsx', sheet = 2)
+# read municipalities data
+muniturf<-read_excel(path = '../../Google Drive/Project Data/phils-data/phils-data-antonius/MWD_Table.xlsx', sheet = 2) 
+
+muniturf$concatenate <- paste(muniturf$`REGION NAME`, muniturf$`PROVINCE NAME`, muniturf$`MUNICIPAL NAME`, sep = '')
+
+# current Rare municipalities
+# cohorts <- read_excel(('../neda/neda-data/sites_philippines.xlsx'), col_names = 'MUNICIPAL NAME') %>%
+#   mutate(`MUNICIPAL NAME` = toupper(`MUNICIPAL NAME`))
+
+sites <- read_csv(file = '../neda/neda-data/rare_sites.csv')
+
+# Identify sites that are previously Rare sites
+muniturf <- muniturf %>%
+  left_join(sites) %>%
+  filter(`Past work Rare` == 'y') %>%
+  select(`MUNICIPAL NAME`, `PROVINCE NAME`, `Past work Rare`) %>%
+  right_join(muniturf)
 
 ###########################################################################################################
-### Maps of Results  -------------------------------------------------------------------------
+### Compile Map Lookup tables  -------------------------------------------------------------------------
 ###########################################################################################################
 
-# lookup table with provinces and municipal ids for joining
+###########################################################################################################
+### Provincial
+
+# lookup table with provinces ids for joining
 lktable<-data.frame(province_name=philsmap@data$NAME_1, id=philsmap@data$ID_1)
-lktable2<-data.frame(Municipality=munimap@data$NAME_2, id=munimap@data$ID_2)
-
-# convert spatial data frame to a format for ggplot
-philsmap<-tidy(philsmap, region = NULL)
 
 # adjust lookup table to account for ERROR with fortify that changes polygon id numbers
 lktable<-lktable %>%
@@ -50,75 +65,83 @@ lktable<-read_csv(file = '../../Google Drive/Project Data/phils-data/phils_fishe
          region_name   = REGION_NAME) %>%
   left_join(lktable)
 
-# region results 
-region_results %>%
-  filter(year == 2014) %>%
-  right_join(lktable) %>%
-  left_join(philsmap) %>%
-  # ggplot(aes(x=long, y=lat, fill = medianb_nat)) + DON"T PLOT THIS - theres an error with the join and the plot will blow up computer
-  # geom_polygon()
-  
-  ## Read in shapefile and tidy to a spatial data frame for use with ggplot
-  # shapefile map data
-  philsmap<-readOGR(dsn = 'voi/Provinces', layer = 'Provinces', stringsAsFactors = F)
+###########################################################################################################
+### Municipal
 
-# lookup table with provinces and ids for joining
-lktable<-data.frame(municipality=philsmap@data$NAME_1, id=philsmap@data$ID_1)
+# Order of municipalities and provinces in shapefile and corresponding polygon id number
+ms <- toupper(munimap@data$NAME_2)
+prvs <- toupper(munimap@data$NAME_1)
+
+lktable2 <- data_frame(ms, prvs, 'id' = as.character(c(0:(length(ms)-1)))) %>%
+  rename(`MUNICIPAL NAME` = ms,
+         `PROVINCE NAME`  = prvs)
+
+# find ids for current cohort sites
+# cohorts <- rare_sites %>%
+#   left_join(lktable2)
+
+### Normalize names
+# Replace Capitals
+muniturf$`MUNICIPAL NAME` <- gsub(muniturf$`MUNICIPAL NAME`, pattern = ' (Capital)', replacement = '', fixed = T)
+
+# unique municipality names in Rare's dataset (to use for normalizing names)
+rare_munis <- unique(muniturf$`MUNICIPAL NAME`)
+need_match_rare <- unique(muniturf$`MUNICIPAL NAME`)[!(unique(muniturf$`MUNICIPAL NAME`) %in% lktable2$`MUNICIPAL NAME`)]
+
+
+# muniturf$`MUNICIPAL NAME` <- gsub(muniturf$`MUNICIPAL NAME`, pattern = ' \\([[:word:]]\\)', replacement = '', perl = T)
+
+# for loop to replace city municipalities
+city <- unique(need_match_rare[grepl(need_match_rare,pattern = '^CITY OF')])
+
+for(b in 1:length(city)) {
+  old <- city[b]
+  new <- gsub(old, pattern = 'CITY OF ', replacement =  '')
+  new <- paste(new, ' CITY', sep = '')
+  muniturf$`MUNICIPAL NAME`[muniturf$`MUNICIPAL NAME`==old] <- new
+}
+
+map_df <- left_join(lktable2, muniturf) 
+
+###########################################################################################################
+### Map Results  -------------------------------------------------------------------------
+###########################################################################################################
 
 # convert spatial data frame to a format for ggplot
-philsmap<-tidy(philsmap, region = NULL)
+phils_map <- tidy(philsmap)
+muni_map <- tidy(munimap)
 
-# make blank map of Philippines
-blank_map<-philsmap %>%
-  ggplot(aes(x = long, y = lat, group = group)) +
-  geom_polygon(fill='white')
+# join dataframe with municipal data
+muni_map <- left_join(muni_map, map_df)
 
-## Summary calculations to join with spatial data frame
+###########################################################################################################
+### Maps 
 
-# list of tuna stocks to exclude
-tunas<-c('Bigeye tuna (Tambakol/ Bariles)',
-         'Eastern little tuna (Bonito)',
-         'Frigate tuna (Tulingan)',
-         'Skipjack (Gulyasan)',
-         'Yellowfin tuna (Tambakol/Bariles)')
+coral_map <- ggplot(muni_map, aes(x = long, y = lat, group = group, fill = as.character(CORALREEFS))) +
+  geom_polygon() +
+  coord_equal(ratio = 1) +
+  guides(fill = F) +
+  scale_fill_manual(na.value = 'grey50', values = c(NA, '#EA883A')) +
+  theme_bw()
 
-# 2014 values - Tuna excluded
-calc14<-final %>%
-  filter(year==2014 & !(species %in% tunas)) %>%
-  group_by(municipality) %>%
-  summarize(
-    totalcatch14     =  sum(catch,na.rm=T),
-    logtotalcatch14  =  log10(totalcatch14),
-    meanprice14      =  mean(priceperton,na.rm=T)) %>%
-  right_join(lktable) %>%
-  mutate(id=as.character(id)) %>%
-  dplyr::select(-municipality)
+ggsave('Coral presence in Philippine Municipalities.pdf')
 
-# join calc14 with 2014 calculations
-philsmap<-left_join(philsmap,calc14)
+rare_map <- ggplot(muni_map, aes(x = long, y = lat, group = group, fill = `Past work Rare`)) +
+  geom_polygon() +
+  coord_equal(ratio = 1) +
+  guides(fill = F) +
+  scale_fill_manual(values = c('blue')) +
+  theme_bw()
 
-# percent changes in catch since 2008 - Tuna included
-perc09<-final %>%
-  filter(year>2009 & !(species %in% tunas)) %>%
-  group_by(municipality,species) %>%
-  mutate(
-    priorcatch = lag(catch),
-    percchange = 100*((catch-priorcatch)/priorcatch)) %>%
-  group_by(municipality) %>%
-  summarize(avgchange=mean(percchange,na.rm=T)) %>%
-  right_join(lktable) %>%
-  mutate(id=as.character(id)) %>%
-  dplyr::select(-municipality)
+ggsave('Rare sites.pdf')
 
-# join percentage calculations with map data
-philsmap<-left_join(philsmap, perc09)
+fishers_map <- ggplot(muni_map, aes(x = long, y = lat, group = group, fill = `Past work Rare`)) +
+  geom_polygon() +
+  coord_equal(ratio = 1) +
+  guides(fill = F) +
+  scale_fill_manual(values = c('blue')) +
+  theme_bw()
 
-plotA<-philsmap %>%
-  ggplot(aes(x = long, y = lat, group = group, fill = logtotalcatch14)) +
-  geom_polygon()
+ggsave('Rare sites.pdf')
 
-plotB<-philsmap %>%
-  ggplot(aes(x = long, y = lat, group = group, fill = percchange)) +
-  geom_polygon()
 
-ggsave(file='notunaperc.pdf')

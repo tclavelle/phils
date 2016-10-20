@@ -36,7 +36,7 @@ phils_archs<-read.csv(file = paste(DataFolder,'phils_archetypes.csv', sep = ''),
 ################################################################################
 
 # Load Rare data with info about each region
-region_data<-read.csv(file = '../Misc Data/fishforever-data/Addressable market files/FULL_DATASET.csv', stringsAsFactors = F) %>%
+region_data<-read.csv(file = '../Misc Data/fishforever-data/Addressable market files/rare_addressable_mkt.csv', stringsAsFactors = F) %>%
   tbl_df() %>%
   mutate(REGION_NAME = toupper(REGION_NAME))
 
@@ -145,6 +145,85 @@ phils<-phils %>%
   mutate(value_us = value_pesos*exrate, 
          price=value_us/catch) %>%
   rename(harvest = catch)
+
+###############################################################################
+### Compile earlier national dataset (1963-2006) to supplement timeseries  
+###############################################################################
+
+# Read in national data from Deng and assign proper column types to avoid autoconversion
+phils_64 <- read_excel(path = '../../Google Drive/Project Data/phils-data/PhilippineNationalFisheries_1963-2006.xlsx', sheet = 1,
+                       col_types = c('text','text','text','text','text','text','text','text','text','text','text',
+                                     'text','text','text','numeric','numeric','numeric'))
+
+# Create SciName variable by combining scientific name and genus
+phils_64 <- phils_64 %>%
+  mutate(SciName = paste(Genus, Species, sep = ' '))
+
+# Where 'NA NA', replace with Family name
+phils_64$SciName[phils_64$SciName=='NA NA'] <- phils_64$Family[phils_64$SciName=='NA NA']
+
+# Where NAs replace with Order
+phils_64$SciName[is.na(phils_64$SciName)] <- phils_64$Order[is.na(phils_64$SciName)]
+
+# Replace 'Genus NA' with 'Genus spp'
+phils_64$SciName <- gsub(pattern = ' NA', replacement = ' spp', phils_64$SciName)
+
+# order by region, species, and year
+phils_64 <- phils_64 %>%
+  dplyr::select(Region, Zone, Sector, SciName, Year, Landings) %>%
+  arrange(Zone, Region, Sector, SciName, Year)
+
+# Read in archetype list
+archs <- read_csv(file = '../../Google Drive/Project Data/phils-data/phils_archetypes_63to06.csv') 
+
+# join with phils_64
+phils_64 <- phils_64 %>%
+  left_join(archs) %>%
+  rename(Catch = Landings) %>%
+  dplyr::select(-Family, -Order)
+
+# Filter data set
+phils_64 <- phils_64 %>%
+  filter(is.na(SpeciesCatName)==F) %>%
+  dplyr::select(Region, Zone, CommName, SciName, SpeciesCat, SpeciesCatName, Year, Catch) %>%
+  ungroup()
+
+# Convert 1976 data to MT from kg
+phils_64$Catch[phils_64$Year==1976] <- phils_64$Catch[phils_64$Year==1976] / 1000
+
+# fix scientific name of frigate tuna
+phils_64$SciName[phils_64$SciName=='Auxis thazard thazard'] <- 'Auxis thazard'
+
+# Make lookup table of region names and numbers to join old data and new data
+reg_lkup <- data_frame(region_name   = unique(phils$region_name),
+                       Region = c('NCR','1','2','3','4','4','5','6','NIR','7','8','9','10','11','12','13','ARMM'))
+
+# Join data with region lookup table 
+phils_64 <- phils_64 %>%
+  left_join(reg_lkup) %>%
+  dplyr::select(-Region,-Zone)
+
+# add ASFIS taxonomic data to both data sets for future aggregation purposes
+asfis <- read_csv(file = '../Misc Data/ASFIS_Feb2014.csv') %>%
+  dplyr::select(-CommName) %>%
+  rename(SciName = Species_AFSIS)
+
+# add to historical data
+phils_64 <- phils_64 %>%
+  left_join(asfis) %>%
+  dplyr::select(-SpeciesCat_ISSCAAP_code)
+
+# add to recent data
+phils <- phils_archs %>%
+  rename(SciName = scientific_name) %>%
+  left_join(asfis) %>%
+  rename(scientific_name = SciName) %>%
+  dplyr::select(species, scientific_name, Family, Order) %>%
+  right_join(phils)
+
+# find all current matched species
+m1 <- unique(phils_64$SciName)[unique(phils_64$SciName) %in% unique(phils$scientific_name)]
+
 
 # write csv of phils fisheries
 write_csv(phils, path = '../../Google Drive/Project Data/phils-data/phils_fisheries_processed.csv')

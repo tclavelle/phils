@@ -1,0 +1,250 @@
+---
+title: "Fish Forever NEDA Analysis"
+author: "Tyler Clavelle"
+date: "July 8, 2016"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r data, include=FALSE, echo=F}
+########################################################################
+### Load packages and data ---------------------------------------------
+
+# Packages
+library(tidyr)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(knitr)
+
+# Data
+status <- read_csv(file = '../voi-project/processed-data/phils_status.csv') # status estimates from GUM assessment
+load('../voi-project/processed-data/phils_projections.Rdata')
+mkt  <- tbl_df(read.csv(file = '../voi-project/raw-data/phils-data/rare_addressable_mkt.csv', stringsAsFactors = F)) # addressable mkt file
+catch  <- tbl_df(read.csv(file = '../voi-project/processed-data/phils_fisheries_processed.csv', stringsAsFactors = F)) 
+
+con_concern <- TRUE
+
+```
+
+## Methods
+
+### Data Sources and Archetype Classification
+Data for this analysis comes from several sources. Fishery harvest and value data for both the municipal and commercial sectors was obtained from the CountrySTAT Philippines [data portal](http://countrystat.psa.gov.ph/). These data include time series of harvest (MT) and value for 31 species items organized by region, municipality, and province. Each of these species items was assigned to one of four archetypes based on the expert opinion of Filipino fisheries scientists.
+
+1. **Large pelagics** - Large tunas, billfish, mackerels, dorado, and sharks
+2. **Small pelagics** - Small tunas (e.g. bullet and frigate), sardines, scads, anchovies, squids, flying fish, and small jacks and trevallies
+3. **Soft bottom** - Siganids, hairtails and other high value breams, pony fishes, blue swimming crab, shrimps, and sea cucumbers
+4. **Hard bottom** - Groupers, snappers, lobsters, miscellaneous reef fishes
+
+The total harvest of each of the four archetypes, along with the unidentified "Other" category, are included in Table 1.
+```{r catch summary, echo=FALSE, fig.cap='Harvest by archetype in the Philippines in 2014'}
+c_sum <- catch %>%
+  filter(year == max(year)) %>%
+  group_by(archetype) %>%
+  summarize(tc = sum(harvest, na.rm = T))
+
+kable(c_sum, digits = 0, col.names = c('Archetype', 'Harvest (MT)'))
+```
+
+### Status Estimation
+Species in both the large and small pelagic groups were deemed to constitute a single nation-wide stock. For the hard and soft bottom species, however, regional populations were determined to be more appropriate. Using these spatial scales of each archetype, the time series of harvest were aggregated for each species to produce the best estimate of individual stocks in the Philippines. This approach yielded 236 stocks representing a total of `r sum(status$catch[status$year==2014], na.rm = T)` MT of harvest in 2014. Using this data set and the approach outlined by Costello et al. (Costello et al. 2016), we successfully estimated the current status (biomass under the water $B/B_{MSY}$ and fishing pressure $F/F_{MSY}$) and maximum sustainable yield (MSY) for `r length(unique(status$IdOrig[is.na(status$MSY)==F]))` of these fisheries. Table 2 contains the median status estimates and total MSY (in metric tons) for the four archetypes.
+
+```{r status summary, echo=FALSE, fig.cap='Median status and total MSY by archetype in the Philippines in 2014'}
+
+s_sum <- status %>%
+  filter(year == max(year)) %>%
+  group_by(Archetype) %>%
+  summarize(medb = median(BvBmsy, na.rm = T),
+            medf = median(FvFmsy, na.rm = T),
+            msy  = sum(MSY, na.rm = T))
+
+kable(s_sum, digits = 2, col.names = c('Archetype','Median B/Bmsy', 'Median F/Fmsy', 'MSY (MT)'))
+```
+
+```{r con concern, echo=FALSE, warning=F, message=F}
+
+## Find species of conservation concern and use only those
+cc <- masterOutput %>%
+  filter(Intervention == "Business-as-usual" & Year == 1 & Alpha == 1 & Theta == 1) %>%
+  filter((BvBmsy < 1 & BvBmsy > 0) | (BvBmsy >=1 & FvFmsy >1)) %>%
+  mutate(StockID = paste(region, speciesName, sep = '_'))
+
+# Non-pelagic catch and BAU projections
+nonpelagic <- catch %>%
+  filter(archetype %in% c('Hard bottom', 'Soft bottom')) %>%
+  mutate(StockID = paste(region_name, species, sep = '_' ))
+
+nonpelagic_bau <- masterOutput %>%
+  filter(Archetype %in% c('Hard bottom', 'Soft bottom') & Intervention == "Business-as-usual" & Year == 50 & Alpha == 1 & Theta == 1) %>%
+  mutate(StockID = paste(region, speciesName, sep = '_'))
+
+# Pelagic catch and BAU projections
+pelagic <- catch %>%
+  filter(archetype %in% c('Large pelagic', 'Small pelagic')) %>%
+  mutate(StockID = paste('National', species, sep = '_' ))
+
+pelagic_bau <- masterOutput %>%
+  filter(Archetype %in% c('Large pelagic', 'Small pelagic') & Intervention == "Business-as-usual" & Year == 50 & Alpha == 1 & Theta == 1) %>%
+  mutate(StockID = paste(region, speciesName, sep = '_'))
+
+# subset to conservation concern if desired
+if(con_concern == TRUE) {
+  nonpelagic <- filter(nonpelagic, StockID %in% cc$StockID)
+  pelagic <- filter(pelagic, StockID %in% cc$StockID)
+  nonpelagic_bau <- filter(nonpelagic_bau, StockID %in% cc$StockID)
+  pelagic_bau <- filter(pelagic_bau, StockID %in% cc$StockID)
+}
+
+```
+
+### Municipality Level Estimates
+The status and MSY estimates obtained for the `r length(unique(status$IdOrig[is.na(status$MSY)==F]))` stocks described previously required the aggregation of finer resolution regional and provincial level data. This aggregation was done in order to best reflect the biological range of the different archetypes. Several steps are necessary in order to provide municipality level estimates of MSY and BAU outcomes. 
+
+We first calculate the percentage of the stock harvested by each province. This percentage, calculated as a weighted average, is then used to divide the MSY of each stock between participating provinces. The provincial harvest and MSY values are then scaled down to the municipality level using the area of municipal waters as a scaling factor.
+
+```{r catch percs, echo=FALSE, warning=F, message=F}
+
+# summarize region totals
+region_csum <- nonpelagic %>%
+  group_by(species, region_name, year) %>%
+  summarize(region_total = sum(harvest, na.rm = T),
+            num_provs    = length(unique(province_name))) %>%
+  ungroup()
+
+# join to provincial level catch data
+prov_csum <- nonpelagic %>%
+  select(species, region_name, province_name, year, harvest) %>%
+  group_by(species, region_name, province_name, year) %>%
+  summarise(harvest = sum(harvest, na.rm = T)) %>%
+  left_join(region_csum)
+
+# convert region_total to NAs in years without provincial harvest
+prov_csum$region_total[is.na(prov_csum$harvest)] <- NA
+
+# calculate weighted percentage
+percs <- prov_csum %>%
+  group_by(species, region_name, province_name) %>%
+  summarize(wt_perc = sum(harvest, na.rm = T) / sum(region_total, na.rm = T)) %>%
+  ungroup()
+
+# filter status and BAU data sets and normalize with catch data set
+norm_status <- status %>%
+  select(Archetype, IdOrig, CommName, year, catch, region_name, BvBmsy, FvFmsy, MSY) %>%
+  rename(archetype = Archetype,
+         species   = CommName)
+
+# subset status data to most recent year and divide up MSY using percentages
+prov_msy <- norm_status %>% 
+  filter(year == 2014) %>%
+  right_join(percs) %>%
+  mutate(province_msy = MSY * wt_perc)
+
+nonpelagic_bau <- nonpelagic_bau %>%
+  group_by(speciesName, region, Year) %>%
+  summarize(region_total_bau = sum(H, na.rm = T)) %>%
+  rename(species     = speciesName,
+         region_name = region) %>%
+  select(-Year) %>%
+  ungroup()
+
+prov_msy <- prov_msy %>%
+  left_join(nonpelagic_bau) %>%
+  mutate(province_bau_2050 = region_total_bau * wt_perc)
+
+ ## repeat process for pelagic stocks but calculating percentanges as a total of national, not regional, catch
+nat_sum <- pelagic %>%
+  group_by(species, year) %>%
+  summarize(nat_total = sum(harvest, na.rm = T))
+
+prov_msy_pel <- pelagic %>%
+  select(species, province_name, year, harvest) %>%
+  group_by(species, province_name, year) %>%
+  summarise(harvest = sum(harvest, na.rm = T)) %>%
+  left_join(nat_sum) %>%
+  group_by(species, province_name) %>%
+  summarize(wt_perc = sum(harvest, na.rm = T) / sum(nat_total, na.rm = T)) %>%
+  ungroup() %>%
+  left_join(norm_status) %>%
+  filter(year == 2014) %>%
+  mutate(province_msy = MSY * wt_perc) %>%
+  select(-region_name)
+  
+pelagic_bau <- pelagic_bau %>%
+  group_by(speciesName, region, Year) %>%
+  summarize(region_total_bau = sum(H, na.rm = T)) %>%
+  rename(species     = speciesName,
+         region_name = region) %>%
+  select(-Year) %>%
+  ungroup()
+
+prov_msy_pel <- prov_msy_pel %>%
+  left_join(pelagic_bau, by = 'species') %>%
+  mutate(province_bau_2050 = region_total_bau * wt_perc)
+
+#check results
+# prov_msy_pel %>%
+#   group_by(species) %>%
+#   summarize(provmsy  = sum(province_msy, na.rm = T),
+#             msy      = mean(MSY, na.rm = T),
+#             prov_bau = sum(province_bau_2050, na.rm = T),
+#             bau      = mean(region_total_bau, na.rm = T)) %>%
+#   ggplot(aes(x = provmsy, y = msy)) +
+#   geom_line() +
+#   geom_point(aes(x = prov_bau, y = bau), color = 'green')
+
+# bind pelagics and regional stocks together
+prov_final <- bind_rows(prov_msy, prov_msy_pel)
+
+prov_final <- catch %>%
+  select(species, region_name, province_name, scale, year, harvest) %>%
+  filter(year == 2014) %>%
+  group_by(species,province_name, year) %>%
+  summarize(harvest = sum(harvest, na.rm = T)) %>%
+  left_join(prov_final) %>%
+  rename(region_harvest           = catch,
+         region_msy               = MSY,
+         region_bvbmsy            = BvBmsy,
+         region_fvfmsy            = FvFmsy,
+         province_harvest             = harvest,
+         prov_weighted_percentage = wt_perc) %>%
+  ungroup()
+
+## Add in municipality levels
+colnames(mkt) <- tolower(colnames(mkt))
+
+# Munis and municipal waters
+muni_data <- mkt %>%
+  select(region_name, province_name, municipal_name, area_of_municipal_waters_ha) %>%
+  group_by(region_name, province_name) %>%
+  summarize(prov_waters = sum(area_of_municipal_waters_ha, na.rm = T)) %>%
+  left_join(mkt) %>%
+  mutate(perc_prov_waters = area_of_municipal_waters_ha / prov_waters) %>%
+  ungroup() %>%
+  select(-region_name) %>%
+  right_join(prov_final) %>%
+  mutate(muni_harvest = perc_prov_waters * province_harvest,
+         muni_msy     = perc_prov_waters * province_msy,
+         muni_bau     = perc_prov_waters * province_bau_2050)
+
+muni_summary <- muni_data %>%
+  filter(archetype != 'Large pelagic') %>%
+  group_by(province_name, municipal_name) %>%
+  summarize(total_harvest  = as.integer(sum(muni_harvest, na.rm = T)),
+            total_msy      = as.integer(sum(muni_msy, na.rm = T)),
+            total_bau_2050 = as.integer(sum(muni_bau, na.rm = T))) %>%
+  ungroup()
+
+# muni_summary %>%
+#   summarize(htomsy   = sum(total_harvest, na.rm = T) / sum(total_msy, na.rm = T),
+#             bautomsy = sum(total_bau_2050, na.rm = T) / sum(total_msy, na.rm = T))
+
+
+write.csv(muni_summary, file = 'neda-results/municipal_harvest_msy_bau.csv')
+
+kable(muni_summary, col.names = c('Province','Municipality','Current Harvest (MT)','MSY (MT)', 'Business-as-usual Harvest in 2050 (MT)'))
+
+```
+
+
